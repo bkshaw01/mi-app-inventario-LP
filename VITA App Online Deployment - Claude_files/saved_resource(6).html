@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<!-- saved from url=(0012)about:srcdoc -->
+<html lang="es"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html-to-image/1.11.13/html-to-image.min.js" integrity="sha512-iZ2ORl595Wx6miw+GuadDet4WQbdSWS3JLMoNfY8cRGoEFy6oT3G9IbcrBeL6AfkgpA51ETt/faX6yLV+/gFJg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script>
+      (function() {
+        const originalConsole = window.console;
+        window.console = {
+          log: (...args) => {
+            originalConsole.log(...args);
+            window.parent.postMessage({ type: 'console', message: args.join(' ') }, '*');
+          },
+          error: (...args) => {
+            originalConsole.error(...args);
+            window.parent.postMessage({ type: 'console', message: 'Error: ' + args.join(' ') }, '*');
+          },
+          warn: (...args) => {
+            originalConsole.warn(...args);
+            window.parent.postMessage({ type: 'console', message: 'Warning: ' + args.join(' ') }, '*');
+          }
+        };
+
+        let requestId = 0;
+        let callbacksMap = new Map();
+        window.claude = {
+          complete: (prompt) => {
+            return new Promise((resolve, reject) => {
+              const id = requestId++;
+              callbacksMap.set(id, { resolve, reject });
+              window.parent.postMessage({ type: 'claudeComplete', id, prompt }, '*');
+            });
+          }
+        };
+
+        // Override global fetch
+        window.fetch = (url, init = {}) => {
+          return new Promise((resolve, reject) => {
+            const id = requestId++;
+            callbacksMap.set(id, { resolve, reject });
+            window.parent.postMessage({
+              type: 'proxyFetch',
+              id,
+              url,
+              init,
+            }, '*');
+          });
+        };
+
+        window.addEventListener('message', async (event) => {
+          if (event.data.type === 'takeScreenshot') {
+            const rootElement = document.getElementById('artifacts-component-root-html');
+            if (!rootElement) {
+              window.parent.postMessage({
+                type: 'screenshotError',
+                error: new Error('Root element not found'),
+              }, '*');
+            }
+            const screenshot = await htmlToImage.toPng(rootElement, {
+              imagePlaceholder:
+                "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAXNSR0IArs4c6QAAAA1JREFUGFdjePDgwX8ACOQDoNsk0PMAAAAASUVORK5CYII=",
+            });
+            window.parent.postMessage({
+              type: 'screenshotData',
+              data: screenshot,
+            }, '*');
+          } else if (event.data.type === 'claudeComplete') {
+            const callback = callbacksMap.get(event.data.id);
+            if (event.data.error) {
+              callback.reject(new Error(event.data.error));
+            } else {
+              callback.resolve(event.data.completion);
+            }
+            callbacksMap.delete(event.data.id);
+          } else if (event.data.type === 'proxyFetchResponse') {
+            const callback = callbacksMap.get(event.data.id);
+            if (event.data.error) {
+              callback.reject(new Error(event.data.error));
+            } else {
+              callback.resolve(new Response(event.data.body, {
+                status: event.data.status,
+                statusText: event.data.statusText,
+                headers: event.data.headers
+              }));
+            }
+            callbacksMap.delete(event.data.id);
+          }
+        });
+
+        window.addEventListener('click', (event) => {
+          const isEl = event.target instanceof HTMLElement;
+          if (!isEl) return;
+    
+          // find ancestor links
+          const linkEl = event.target.closest("a");
+          if (!linkEl || !linkEl.href) return;
+    
+          event.preventDefault();
+          event.stopImmediatePropagation();
+    
+          let linkUrl;
+          try {
+            linkUrl = new URL(linkEl.href);
+          } catch (error) {
+            return;
+          }
+    
+          if (linkUrl.hostname === window.location.hostname) return;
+    
+          window.parent.postMessage({
+            type: 'openExternal',
+            href: linkEl.href,
+          }, '*');
+      });
+
+        const originalOpen = window.open;
+        window.open = function (url) {
+          window.parent.postMessage({
+            type: "openExternal",
+            href: url,
+          }, "*");
+        };
+
+        window.addEventListener('error', (event) => {
+          window.parent.postMessage({ type: 'console', message: 'Uncaught Error: ' + event.message }, '*');
+        });
+      })();
+    </script>
+  
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VITA - Sistema de Inventario</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://unpkg.com/lucide-react@latest/dist/umd/lucide-react.js"></script>
+    <script src="https://cdn.tailwindcss.com/"></script>
+    <style>
+        body { 
+            margin: 0; 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+        }
+    </style>
+</head>
+<body id="artifacts-component-root-html">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState } = React;
+        const { Plus, ShoppingCart, Package, Users, Check, X, Eye, Upload, Download } = LucideReact;
+
+        const VitaRestaurantApp = () => {
+          const [currentView, setCurrentView] = useState('menu');
+          const [userRole, setUserRole] = useState('cocina');
+          const [mostrarCargaExcel, setMostrarCargaExcel] = useState(false);
+          
+          const [pedidos, setPedidos] = useState([
+            { id: 1, producto: 'Tomates', cantidad: '5 kg', solicitante: 'Cocina', fecha: '22/07/2025', estado: 'pendiente' },
+            { id: 2, producto: 'Aceite de oliva', cantidad: '2 L', solicitante: 'Cocina', fecha: '21/07/2025', estado: 'comprado' }
+          ]);
+          
+          const [inventario, setInventario] = useState([
+            { id: 1, producto: 'Tomates', stock: '2 kg', minimo: '5 kg', estado: 'bajo' },
+            { id: 2, producto: 'Aceite de oliva', cantidad: '1 L', minimo: '2 L', estado: 'bajo' },
+            { id: 3, producto: 'Arroz', cantidad: '10 kg', minimo: '5 kg', estado: 'ok' },
+            { id: 4, producto: 'Pollo', cantidad: '8 kg', minimo: '3 kg', estado: 'ok' }
+          ]);
+          
+          const [nuevoPedido, setNuevoPedido] = useState({ producto: '', cantidad: '' });
+
+          const leerArchivoExcel = (archivo) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+              try {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[sheetName];
+                const jsonData = XLSX.utils.sheet_to_json(worksheet);
+                
+                const nuevosInsumos = jsonData.map((fila, index) => ({
+                  id: Date.now() + index,
+                  producto: fila['Producto'] || fila['producto'] || fila['PRODUCTO'] || '',
+                  stock: fila['Stock'] || fila['stock'] || fila['STOCK'] || '0',
+                  minimo: fila['Minimo'] || fila['minimo'] || fila['MINIMO'] || fila['Mínimo'] || '0',
+                  unidad: fila['Unidad'] || fila['unidad'] || fila['UNIDAD'] || 'kg',
+                  categoria: fila['Categoria'] || fila['categoria'] || fila['CATEGORIA'] || fila['Categoría'] || 'General',
+                  proveedor: fila['Proveedor'] || fila['proveedor'] || fila['PROVEEDOR'] || '',
+                  estado: determinarEstado(fila['Stock'] || fila['stock'] || '0', fila['Minimo'] || fila['minimo'] || '0')
+                }));
+                
+                const insumosFiltrados = nuevosInsumos.filter(item => item.producto && item.producto.trim() !== '');
+                
+                setInventario(insumosFiltrados);
+                setMostrarCargaExcel(false);
+                alert(`✅ Se cargaron ${insumosFiltrados.length} productos correctamente!`);
+              } catch (error) {
+                alert('❌ Error al leer el archivo Excel. Verifica que el formato sea correcto.');
+                console.error('Error:', error);
+              }
+            };
+            reader.readAsArrayBuffer(archivo);
+          };
+
+          const determinarEstado = (stock, minimo) => {
+            const stockNum = parseFloat(stock) || 0;
+            const minimoNum = parseFloat(minimo) || 0;
+            return stockNum <= minimoNum ? 'bajo' : 'ok';
+          };
+
+          const descargarPlantilla = () => {
+            const plantilla = [
+              {
+                'Producto': 'Tomates',
+                'Stock': '10',
+                'Minimo': '5',
+                'Unidad': 'kg',
+                'Categoria': 'Verduras',
+                'Proveedor': 'Proveedor A'
+              },
+              {
+                'Producto': 'Aceite de oliva',
+                'Stock': '3',
+                'Minimo': '2',
+                'Unidad': 'L',
+                'Categoria': 'Aceites',
+                'Proveedor': 'Proveedor B'
+              },
+              {
+                'Producto': 'Arroz',
+                'Stock': '25',
+                'Minimo': '10',
+                'Unidad': 'kg',
+                'Categoria': 'Granos',
+                'Proveedor': 'Proveedor C'
+              }
+            ];
+
+            const ws = XLSX.utils.json_to_sheet(plantilla);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
+            XLSX.writeFile(wb, 'Plantilla_Inventario_Vita.xlsx');
+          };
+
+          const agregarPedido = () => {
+            if (nuevoPedido.producto && nuevoPedido.cantidad) {
+              const pedido = {
+                id: Date.now(),
+                producto: nuevoPedido.producto,
+                cantidad: nuevoPedido.cantidad,
+                solicitante: userRole === 'cocina' ? 'Cocina' : 'Admin',
+                fecha: new Date().toLocaleDateString('es-ES'),
+                estado: 'pendiente'
+              };
+              setPedidos([...pedidos, pedido]);
+              setNuevoPedido({ producto: '', cantidad: '' });
+            }
+          };
+
+          const marcarComprado = (id) => {
+            setPedidos(pedidos.map(p => 
+              p.id === id ? { ...p, estado: 'comprado' } : p
+            ));
+          };
+
+          const eliminarPedido = (id) => {
+            setPedidos(pedidos.filter(p => p.id !== id));
+          };
+
+          const MenuPrincipal = () => (
+            <div className="bg-white min-h-screen">
+              <div className="bg-orange-600 text-white p-6 text-center">
+                <h1 className="text-3xl font-bold">🍽️ VITA</h1>
+                <p className="text-lg mt-2">Sistema de Inventario</p>
+              </div>
+
+              <div className="p-6 bg-gray-50">
+                <label className="block text-lg font-semibold mb-3">¿Quién eres?</label>
+                <div className="grid grid-cols-3 gap-4">
+                  <button
+                    onClick={() => setUserRole('cocina')}
+                    className={`p-4 rounded-lg border-2 text-center ${
+                      userRole === 'cocina' ? 'border-orange-500 bg-orange-50' : 'border-gray-300'
+                    }`}
+                  >
+                    👨‍🍳 Cocina
+                  </button>
+                  <button
+                    onClick={() => setUserRole('compras')}
+                    className={`p-4 rounded-lg border-2 text-center ${
+                      userRole === 'compras' ? 'border-orange-500 bg-orange-50' : 'border-gray-300'
+                    }`}
+                  >
+                    🛒 Compras
+                  </button>
+                  <button
+                    onClick={() => setUserRole('admin')}
+                    className={`p-4 rounded-lg border-2 text-center ${
+                      userRole === 'admin' ? 'border-orange-500 bg-orange-50' : 'border-gray-300'
+                    }`}
+                  >
+                    👥 Administrador
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <button
+                  onClick={() => setCurrentView('pedidos')}
+                  className="w-full bg-blue-500 hover:bg-blue-600 text-white p-6 rounded-lg text-xl font-semibold flex items-center justify-center space-x-3"
+                >
+                  <ShoppingCart size={32} />
+                  <span>PEDIDOS DE COMPRA</span>
+                </button>
+
+                <button
+                  onClick={() => setCurrentView('inventario')}
+                  className="w-full bg-green-500 hover:bg-green-600 text-white p-6 rounded-lg text-xl font-semibold flex items-center justify-center space-x-3"
+                >
+                  <Package size={32} />
+                  <span>VER INVENTARIO</span>
+                </button>
+
+                {userRole === 'cocina' && (
+                  <button
+                    onClick={() => setCurrentView('solicitar')}
+                    className="w-full bg-orange-500 hover:bg-orange-600 text-white p-6 rounded-lg text-xl font-semibold flex items-center justify-center space-x-3"
+                  >
+                    <Plus size={32} />
+                    <span>PEDIR INSUMOS</span>
+                  </button>
+                )}
+
+                {(userRole === 'admin' || userRole === 'compras') && (
+                  <button
+                    onClick={() => setMostrarCargaExcel(true)}
+                    className="w-full bg-purple-500 hover:bg-purple-600 text-white p-6 rounded-lg text-xl font-semibold flex items-center justify-center space-x-3"
+                  >
+                    <Upload size={32} />
+                    <span>CARGAR EXCEL</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+
+          const ModalCargaExcel = () => (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white rounded-lg p-6 m-4 max-w-md w-full">
+                <h2 className="text-2xl font-bold mb-4 text-center">📊 Cargar Excel</h2>
+                
+                <div className="space-y-4">
+                  <div className="text-center">
+                    <button
+                      onClick={descargarPlantilla}
+                      className="bg-green-500 hover:bg-green-600 text-white px-4 py-3 rounded-lg flex items-center space-x-2 mx-auto"
+                    >
+                      <Download size={20} />
+                      <span>Descargar Plantilla</span>
+                    </button>
+                    <p className="text-sm text-gray-500 mt-2">
+                      Primero descarga la plantilla para ver el formato correcto
+                    </p>
+                  </div>
+
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+                    <input
+                      type="file"
+                      accept=".xlsx,.xls"
+                      onChange={(e) => {
+                        const archivo = e.target.files[0];
+                        if (archivo) {
+                          leerArchivoExcel(archivo);
+                          e.target.value = '';
+                        }
+                      }}
+                      className="hidden"
+                      id="excel-upload"
+                    />
+                    <label htmlFor="excel-upload" className="cursor-pointer">
+                      <Upload size={48} className="mx-auto text-gray-400 mb-2" />
+                      <p className="text-lg font-semibold">Subir archivo Excel</p>
+                      <p className="text-sm text-gray-500">Formato: .xlsx o .xls</p>
+                    </label>
+                  </div>
+
+                  <div className="bg-blue-50 p-4 rounded-lg">
+                    <h3 className="font-semibold mb-2">📋 Columnas requeridas:</h3>
+                    <ul className="text-sm space-y-1">
+                      <li>• <strong>Producto</strong>: Nombre del insumo</li>
+                      <li>• <strong>Stock</strong>: Cantidad actual</li>
+                      <li>• <strong>Minimo</strong>: Stock mínimo</li>
+                      <li>• <strong>Unidad</strong>: kg, L, unidades, etc.</li>
+                      <li>• <strong>Categoria</strong>: Tipo de producto</li>
+                      <li>• <strong>Proveedor</strong>: Nombre del proveedor</li>
+                    </ul>
+                  </div>
+
+                  <div className="flex space-x-3">
+                    <button
+                      onClick={() => setMostrarCargaExcel(false)}
+                      className="flex-1 bg-gray-500 hover:bg-gray-600 text-white py-3 rounded-lg font-semibold"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+
+          if (mostrarCargaExcel) {
+            return (
+              <div>
+                <MenuPrincipal />
+                <ModalCargaExcel />
+              </div>
+            );
+          }
+
+          const VistaPedidos = () => (
+            <div className="bg-white min-h-screen">
+              <div className="bg-blue-600 text-white p-4 flex items-center">
+                <button onClick={() => setCurrentView('menu')} className="mr-4 text-2xl">←</button>
+                <h1 className="text-2xl font-bold">Lista de Pedidos</h1>
+              </div>
+
+              <div className="p-4 space-y-4">
+                {pedidos.map(pedido => (
+                  <div key={pedido.id} className={`border-2 rounded-lg p-4 ${
+                    pedido.estado === 'pendiente' ? 'border-red-300 bg-red-50' : 'border-green-300 bg-green-50'
+                  }`}>
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <h3 className="text-xl font-semibold">{pedido.producto}</h3>
+                        <p className="text-gray-600">Cantidad: {pedido.cantidad}</p>
+                        <p className="text-sm text-gray-500">Solicitado por: {pedido.solicitante}</p>
+                        <p className="text-sm text-gray-500">Fecha: {pedido.fecha}</p>
+                      </div>
+                      <div className="flex flex-col space-y-2">
+                        <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
+                          pedido.estado === 'pendiente' ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'
+                        }`}>
+                          {pedido.estado === 'pendiente' ? 'PENDIENTE' : 'COMPRADO'}
+                        </span>
+                        
+                        {userRole === 'compras' && (
+                          <div className="flex space-x-2">
+                            {pedido.estado === 'pendiente' && (
+                              <button
+                                onClick={() => marcarComprado(pedido.id)}
+                                className="bg-green-500 text-white px-3 py-1 rounded flex items-center"
+                              >
+                                <Check size={16} />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => eliminarPedido(pedido.id)}
+                              className="bg-red-500 text-white px-3 py-1 rounded flex items-center"
+                            >
+                              <X size={16} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+
+          const VistaInventario = () => (
+            <div className="bg-white min-h-screen">
+              <div className="bg-green-600 text-white p-4 flex items-center">
+                <button onClick={() => setCurrentView('menu')} className="mr-4 text-2xl">←</button>
+                <h1 className="text-2xl font-bold">Inventario Actual</h1>
+              </div>
+
+              <div className="p-4 space-y-4">
+                {inventario.map(item => (
+                  <div key={item.id} className={`border-2 rounded-lg p-4 ${
+                    item.estado === 'bajo' ? 'border-red-300 bg-red-50' : 'border-green-300 bg-green-50'
+                  }`}>
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <h3 className="text-xl font-semibold">{item.producto}</h3>
+                        <p className="text-gray-600">Stock actual: {item.stock || item.cantidad} {item.unidad || ''}</p>
+                        <p className="text-sm text-gray-500">Mínimo requerido: {item.minimo} {item.unidad || ''}</p>
+                        {item.categoria && <p className="text-sm text-blue-600">Categoría: {item.categoria}</p>}
+                        {item.proveedor && <p className="text-sm text-green-600">Proveedor: {item.proveedor}</p>}
+                      </div>
+                      <div className="text-right">
+                        <span className={`px-4 py-2 rounded-full text-lg font-semibold ${
+                          item.estado === 'bajo' ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'
+                        }`}>
+                          {item.estado === 'bajo' ? '⚠️ BAJO' : '✅ OK'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+
+          const VistaSolicitar = () => (
+            <div className="bg-white min-h-screen">
+              <div className="bg-orange-600 text-white p-4 flex items-center">
+                <button onClick={() => setCurrentView('menu')} className="mr-4 text-2xl">←</button>
+                <h1 className="text-2xl font-bold">Pedir Insumos</h1>
+              </div>
+
+              <div className="p-6">
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-lg font-semibold mb-2">¿Qué necesitas?</label>
+                    <input
+                      type="text"
+                      value={nuevoPedido.producto}
+                      onChange={(e) => setNuevoPedido({...nuevoPedido, producto: e.target.value})}
+                      className="w-full p-4 border-2 border-gray-300 rounded-lg text-lg"
+                      placeholder="Ej: Tomates, Aceite, Arroz..."
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-lg font-semibold mb-2">¿Qué cantidad?</label>
+                    <input
+                      type="text"
+                      value={nuevoPedido.cantidad}
+                      onChange={(e) => setNuevoPedido({...nuevoPedido, cantidad: e.target.value})}
+                      className="w-full p-4 border-2 border-gray-300 rounded-lg text-lg"
+                      placeholder="Ej: 5 kg, 2 litros, 10 unidades..."
+                    />
+                  </div>
+
+                  <button
+                    onClick={agregarPedido}
+                    className="w-full bg-orange-500 hover:bg-orange-600 text-white p-4 rounded-lg text-xl font-semibold"
+                  >
+                    ENVIAR PEDIDO
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+
+          switch(currentView) {
+            case 'pedidos':
+              return <VistaPedidos />;
+            case 'inventario':
+              return <VistaInventario />;
+            case 'solicitar':
+              return <VistaSolicitar />;
+            default:
+              return <MenuPrincipal />;
+          }
+        };
+
+        ReactDOM.render(<VitaRestaurantApp />, document.getElementById('root'));
+    </script>
+
+</body></html>
